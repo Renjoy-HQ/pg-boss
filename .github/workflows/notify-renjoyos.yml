@@ -1,0 +1,27 @@
+name: Notify RenjoyOS
+
+on:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ask RenjoyOS to open a pin pull request
+        env:
+          TOKEN: ${{ secrets.RENJOYOS_DISPATCH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TOKEN}" ]; then
+            echo "RENJOYOS_DISPATCH_TOKEN is not set. RenjoyOS polls master every 10 minutes."
+            exit 0
+          fi
+          curl -sS -X POST \
+            -H "Authorization: Bearer ${TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/Renjoy-HQ/renjoyos/dispatches \
+            -d '{"event_type":"pg-boss-master"}'
