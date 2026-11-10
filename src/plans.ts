@@ -3350,6 +3350,27 @@ function failJobsBody (schema: string, table: string, where: string, output: str
     ? `${schema}.job_now()`
     : `CASE WHEN retry_count < retry_limit THEN NULL ELSE ${schema}.job_now() END`
 
+  // A retry moves start_after forward. keep_until is set once, at insert, so the
+  // retention sweep (state < active AND keep_until < now()) can delete a job that
+  // is waiting to run. Slide the same retention window onto the new start_after.
+  // A terminal failure keeps the original keep_until.
+  const startAfter = `CASE WHEN retry_count = retry_limit THEN start_after
+             WHEN NOT retry_backoff THEN ${schema}.job_now() + retry_delay * interval '1'
+             ELSE ${schema}.job_now() + LEAST(
+               retry_delay_max,
+               GREATEST(retry_delay, 1) * (
+                2 ^ LEAST(16, retry_count + 1) / 2 +
+                2 ^ LEAST(16, retry_count + 1) / 2 * random()
+               )
+             ) * interval '1s'
+        END`
+  const keepUntil = forceTerminal
+    ? 'keep_until'
+    : `CASE
+          WHEN retry_count < retry_limit THEN (${startAfter}) + (keep_until - start_after)
+          ELSE keep_until
+        END`
+
   return `deleted_jobs AS (
       DELETE FROM ${schema}.${table}
       WHERE ${where}
@@ -3405,16 +3426,7 @@ function failJobsBody (schema: string, table: string, where: string, output: str
         retry_delay,
         retry_backoff,
         retry_delay_max,
-        CASE WHEN retry_count = retry_limit THEN start_after
-             WHEN NOT retry_backoff THEN ${schema}.job_now() + retry_delay * interval '1'
-             ELSE ${schema}.job_now() + LEAST(
-               retry_delay_max,
-               GREATEST(retry_delay, 1) * (
-                2 ^ LEAST(16, retry_count + 1) / 2 +
-                2 ^ LEAST(16, retry_count + 1) / 2 * random()
-               )
-             ) * interval '1s'
-        END as start_after,
+        ${startAfter} as start_after,
         started_on,
         singleton_key,
         singleton_on,
@@ -3424,7 +3436,7 @@ function failJobsBody (schema: string, table: string, where: string, output: str
         deletion_seconds,
         created_on,
         ${completedOn} as completed_on,
-        keep_until,
+        ${keepUntil} as keep_until,
         policy,
         ${output},
         dead_letter,

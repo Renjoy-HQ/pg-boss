@@ -4,7 +4,6 @@ node_modules
 *.tgz
 *.log
 coverage
-dist
 .react-router
 build
 /docs/.vitepress/cache
